@@ -1,6 +1,6 @@
 ---
 2---
-title: "Cluster Analysis de GEI en durante los años 1990 y 2021 en 10 paíes de LATAM"
+title: "Cluster Analysis of GHG Emissions in 10 LATAM Countries (1990–2021)"
 format: html
 editor: visual
 ---
