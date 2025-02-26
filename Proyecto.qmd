@@ -1,0 +1,665 @@
+---
+2---
+title: "Cluster Analysis de GEI en durante los años 1990 y 2021 en 10 paíes de LATAM"
+format: html
+editor: visual
+---
+
+## Data
+
+### Gases de Efecto Invernadero LATAM
+
+```{r}
+library(googlesheets4)
+data_GEI <- read_sheet("https://docs.google.com/spreadsheets/d/1fxaaoIBVEquq7Dm9ng42ai9_VjwVoWQV8JdT2eS4ehg/edit?usp=sharing")
+data_GEI
+#link web -> https://www.climatewatchdata.org/ghg-emissions?chartType=line&end_year=2021&gases=all-ghg&regions=LAC&start_year=1990
+#link data ->https://docs.google.com/spreadsheets/d/1fxaaoIBVEquq7Dm9ng42ai9_VjwVoWQV8JdT2eS4ehg/edit?usp=sharing
+```
+
+### Incremento poblacional LATAM
+
+```{r}
+data_POB <- read_sheet("https://docs.google.com/spreadsheets/d/1Fb1_tsfISqIK1iC1LBcsjT00WVaE5sxpA5ifF-EgMvo/edit?usp=sharing")
+data_POB
+#Link web -> https://datos.bancomundial.org/indicador/SP.POP.TOTL?locations=ZJ
+#Link data -> https://docs.google.com/spreadsheets/d/1Fb1_tsfISqIK1iC1LBcsjT00WVaE5sxpA5ifF-EgMvo/edit?usp=sharing
+```
+
+#### Número relativo
+
+Este proceso busca calcular las **emisiones de gases de efecto invernadero (GEI) per cápita** para diferentes países y años. Se utiliza la población de cada país para dividir las emisiones totales y así obtener un valor promedio por persona. Esto permite comparar la contribución de cada individuo a las emisiones, independientemente del tamaño total de la población de cada país.
+
+El procedimiento consiste en:
+
+1.  **Unir las bases de datos**: Combinar las emisiones totales de GEI con los datos de población, emparejando por el nombre del país.
+
+2.  **Calcular las emisiones per cápita**:
+
+    -   Convertir las emisiones de **millones de toneladas (MtCO₂eq)** a **toneladas (tCO₂eq)** multiplicándolas por 10\^6 y dividirla entre la población total para obtener el valor per cápita.
+
+    -   Las emisiones per cápita se calculan como: $\text{Emisiones per cápita} = \frac{\text{Emisiones totales [MtCO2eq]} \times 10^6}{\text{Población total [personas]}}$.
+
+3.  **Filtrar columnas**: Conservar solo los datos relevantes para el análisis (nombre del país y valores per cápita).
+
+```{r}
+library(dplyr)
+
+# Verifica los nombres de las columnas
+colnames(data_GEI)
+colnames(data_POB)
+
+# Ajusta el código según los nombres reales de las columnas
+data_combined <- data_GEI %>%
+  mutate(across(
+    .cols = matches("^19[9][0-9]$|^20[0-2][0-9]$"),  # Seleccionar columnas de años entre 1990 y 2021
+    .fns = ~ .x / data_POB[[cur_column()]] * 10^6,  # Dividir por población y multiplicar por 10^6
+    .names = "{.col}_per_capita"  # Renombrar las columnas
+  )) %>%
+  select(Country, ends_with("_per_capita"))  # Seleccionar columnas relevantes
+
+# Vista previa de la base combinada
+data_combined
+```
+
+```{r}
+# Instalar paquetes necesarios (si aún no los tienes)
+if (!require("kableExtra")) install.packages("kableExtra")
+if (!require("dplyr")) install.packages("dplyr")
+if (!require("scales")) install.packages("scales")
+
+# Cargar librerías
+library(kableExtra)
+library(dplyr)
+library(scales)
+
+# Calcular el promedio de emisiones per cápita
+data_combined$Avg_1990_2021 <- round(rowMeans(data_combined[, grep("_per_capita$", names(data_combined))]), 2)
+
+# Crear una tabla con las áreas de los países (en km²)
+areas <- data.frame(
+  Country = c("Argentina", "Bolivia", "Brazil", "Chile", "Colombia", "Ecuador", "Peru", "Paraguay", "Uruguay", "Venezuela"),
+  Area_km2 = c(2780400, 1098581, 8515767, 756102, 1141748, 283561, 1285216, 406752, 176215, 916445)
+)
+
+# Unir las tablas por la columna "Country"
+result <- data_combined %>%
+  select(Country, Avg_1990_2021) %>%
+  left_join(areas, by = "Country") %>%
+  arrange(desc(Avg_1990_2021))  # Ordenar por emisiones promedio
+
+# Dar formato con separador de miles y decimales
+result <- result %>%
+  mutate(
+    Avg_1990_2021 = number(Avg_1990_2021, accuracy = 0.01, big.mark = ","),
+    Area_km2 = number(Area_km2, big.mark = ",", decimal.mark = ".")
+  )
+
+# Crear una tabla estilizada para un póster
+result_table <- result %>%
+  kbl(
+    caption = "Promedio de emisiones de GEI per cápita y área (1990-2021)",
+    col.names = c("País", "Emisiones Promedio (1990-2021) - [tCO2eq per cápita]", "Área [km²]"),
+    align = "c",
+    format = "html"
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+    full_width = F,
+    font_size = 14
+  ) %>%
+  column_spec(1, bold = T, width = "10em") %>%
+  column_spec(2, width = "10em") %>%
+  column_spec(3, width = "12em") %>%
+  row_spec(0, bold = T, background = "#D3D3D3")
+
+# Guardar la tabla en un archivo HTML
+save_kable(result_table, "emisiones_y_area_poster.html")
+
+# Mostrar la tabla en la consola
+result_table
+```
+
+#### Gráfico del progreso de las emisiones de CO2 en 10 países de Sudamérica
+
+```{r}
+# Cargar bibliotecas necesarias
+library(ggplot2)
+library(tidyverse)
+
+# Asegúrate de que data_combined está definido correctamente antes de este paso.
+# Pivotar los datos a formato largo para graficar
+data_long <- data_combined %>%
+  pivot_longer(
+    cols = ends_with("per_capita"),  # Asegúrate de usar las columnas correctas
+    names_to = "Year", 
+    values_to = "Emissions"
+  ) %>%
+  mutate(
+    Year = as.numeric(str_extract(Year, "\\d{4}"))  # Extraer el año de las columnas
+  )
+
+# Graficar el incremento de GEI para cada país con líneas más gruesas
+ggplot(data_long, aes(x = Year, y = Emissions, color = Country, group = Country)) +
+  geom_line(size = 0.8) +  # Ajustar el grosor de las líneas
+  geom_point() + 
+  labs(
+    title = "Emisiones de GEI per cápita por país",
+    x = "Año", 
+    y = "Emisiones (tCO2eq per cápita)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold")
+  )
+```
+
+```{r}
+# Instalar paquetes necesarios si no están instalados
+if (!requireNamespace("sf", quietly = TRUE)) install.packages("sf")
+if (!requireNamespace("rnaturalearth", quietly = TRUE)) install.packages("rnaturalearth")
+if (!requireNamespace("rnaturalearthdata", quietly = TRUE)) install.packages("rnaturalearthdata")
+
+library(sf)
+library(ggplot2)
+library(dplyr)
+library(rnaturalearth)
+
+# Filtrar las emisiones del 2011 per cápita
+data_1990 <- data_combined %>%
+  select(Country, `1990_per_capita`) %>%
+  rename(Emissions_1990 = `1990_per_capita`)
+
+# Cargar shapefile de Sudamérica
+south_america <- ne_countries(scale = "medium", continent = "South America", returnclass = "sf")
+
+# Unir los datos de GEI con el shapefile de Sudamérica
+map_data_1990 <- south_america %>%
+  left_join(data_1990, by = c("name_long" = "Country"))
+```
+
+```{r}
+# Filtrar las emisiones del 2016 per cápita
+data_2000 <- data_combined %>%
+  select(Country, `2000_per_capita`) %>%
+  rename(Emissions_2000 = `2000_per_capita`)
+
+# Cargar shapefile de Sudamérica
+south_america <- ne_countries(scale = "medium", continent = "South America", returnclass = "sf")
+
+# Unir los datos de GEI con el shapefile de Sudamérica
+map_data_2000<- south_america %>%
+  left_join(data_2000, by = c("name_long" = "Country"))
+```
+
+```{r}
+# Filtrar las emisiones del 2021 per cápita
+data_2010 <- data_combined %>%
+  select(Country, `2010_per_capita`) %>%
+  rename(Emissions_2010 = `2010_per_capita`)
+
+# Cargar shapefile de Sudamérica
+south_america <- ne_countries(scale = "medium", continent = "South America", returnclass = "sf")
+
+# Unir los datos de GEI con el shapefile de Sudamérica
+map_data_2010 <- south_america %>%
+  left_join(data_2010, by = c("name_long" = "Country"))
+```
+
+```{r}
+# Filtrar las emisiones del 2021 per cápita
+data_2021 <- data_combined %>%
+  select(Country, `2021_per_capita`) %>%
+  rename(Emissions_2021 = `2021_per_capita`)
+
+# Cargar shapefile de Sudamérica
+south_america <- ne_countries(scale = "medium", continent = "South America", returnclass = "sf")
+
+# Unir los datos de GEI con el shapefile de Sudamérica
+map_data_2021 <- south_america %>%
+  left_join(data_2021, by = c("name_long" = "Country"))
+```
+
+```{r}
+# Crear el gráfico combinado con los cuatro mapas en fila
+ggplot(data = map_data_combined) +
+  geom_sf(aes(fill = Emissions, geometry = geometry), color = "black") +
+  scale_fill_gradient(
+    low = "white", 
+    high = "red", 
+    na.value = "gray90",  # Color gris para países no incluidos
+    limits = c(0, 25),  # Rango de valores
+    breaks = seq(0, 25, by = 5),  # Escala en intervalos de 5
+    name = "GEI per cápita\n(t CO2eq/persona)"
+  ) +
+  labs(
+    title = "Emisiones de GEI per cápita en Sudamérica",
+    subtitle = "Años: 1990, 2000, 2010, 2021",
+    caption = "Fuente: Base de datos de GEI y población\nLos países en gris no están incluidos en el estudio."
+  ) +
+  facet_wrap(~Year, ncol = 4) +  # Crear paneles en una fila
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    legend.position = "right"
+  )
+```
+
+### Cluster Analysis 1990 - 2000
+
+#### Paso 1: Preparación de datos
+
+En este paso, eliminamos columnas no numéricas (como `Country` o identificadores) y valores faltantes (`NA`). Esto asegura que el análisis de clústeres se realice solo con datos numéricos y completos.
+
+```{r}
+# Filtrar las columnas relevantes (1990 a 2000) y eliminar valores faltantes, excluyendo `Country`
+data_combined_cleaned <- data_combined %>%
+  select(matches("^199[0-9]_per_capita$|^2000_per_capita$")) %>%  # Seleccionar columnas entre 1990 y 2000
+  na.omit()  # Eliminar filas con valores faltantes (NA)
+
+# Verificar los datos procesados
+head(data_combined_cleaned)
+```
+
+#### Paso 2: Estadarización de datos
+
+El análisis de clústeres (por ejemplo, K-means) es sensible a la escala de las variables. Por eso, estandarizamos los datos para que todas las variables tengan media 0 y desviación estándar 1.
+
+```{r}
+# Estandarizar los datos para eliminar el efecto de las diferentes escalas
+data_scaled <- scale(data_combined_cleaned)
+```
+
+#### Paso 3: Determinación óptima de clústeres con el método K - means
+
+Usamos el **método del codo** para determinar el número óptimo de clústeres. El gráfico muestra cómo la inercia (WSS) disminuye con el número de clústeres. El punto donde la disminución se estabiliza es el número óptimo.
+
+```{r}
+library(factoextra)
+# Determinar el número máximo de clústeres
+n_obs <- nrow(data_scaled)  # Número de filas en los datos escalados
+
+# Graficar el método del codo con un límite en el número de clústeres
+fviz_nbclust(data_scaled, kmeans, method = "wss", k.max = min(10, n_obs - 1)) +
+  labs(title = "Método del Codo para Determinar el Número de Clústeres (1990 - 2000)")
+```
+
+#### Paso 3: Determinación óptima de clústeres con el método de clustering jerárquico
+
+```{r}
+# Cargar librerías necesarias
+if (!requireNamespace("factoextra", quietly = TRUE)) install.packages("factoextra")
+if (!requireNamespace("dendextend", quietly = TRUE)) install.packages("dendextend")
+
+library(factoextra)
+library(dendextend)
+
+# Calcular la matriz de distancias (usaremos la distancia Euclidiana)
+distance_matrix <- dist(data_scaled, method = "euclidean")
+
+# Realizar el clustering jerárquico (usaremos el método de enlace completo)
+hclust_result <- hclust(distance_matrix, method = "complete")
+
+# Graficar el dendrograma
+fviz_dend(hclust_result, k = 3,  # Número de clústeres deseados
+          cex = 0.5,             # Tamaño del texto
+          k_colors = c("red", "blue", "green"),  # Colores para los clústeres
+          rect = TRUE,           # Dibujar rectángulos alrededor de los clústeres
+          rect_border = "gray",
+          rect_fill = TRUE,
+          main = "Dendrograma del Clustering Jerárquico (1990 - 2000)")
+
+```
+
+#### Paso 4: Visualizar los clústeres en un espacio PCA
+
+Utilizamos PCA (Análisis de Componentes Principales) para reducir la dimensionalidad y visualizar los clústeres en dos dimensiones. Esto nos permite entender cómo se agrupan los datos.
+
+```{r}
+# Asignar observaciones a clústeres (k = número de clústeres deseados)
+cluster_assignments <- cutree(hclust_result, k = 3)  # Cambia "k" según el número de clústeres deseado
+
+# Visualización de los clústeres en el espacio PCA
+fviz_cluster(
+  list(data = data_scaled, cluster = cluster_assignments),
+  geom = "point",
+  ellipse.type = "convex",  # Dibujar elipses alrededor de los clústeres
+  ggtheme = theme_minimal(),
+  main = "Visualización de Clústeres Jerárquicos con PCA"
+)
+```
+
+#### Paso 5: Inclusión de valorización según cluster en los países
+
+Los clústeres se guardan como una nueva columna (`Cluster`) en el dataset original para facilitar el análisis posterior.
+
+```{r}
+# Cortar el dendrograma en 3 clústeres
+clusters_hierarchical <- cutree(hclust_result, k = 3)
+
+data_combined_1990_2000 <- data_combined %>%
+  select(Country,matches("^199[0-9]_per_capita$|^2000_per_capita$"))
+
+# Agregar los clústeres al dataset original
+data_combined_1990_2000$Cluster <- as.factor(clusters_hierarchical)
+
+library(dplyr)
+
+# Intercambiar las etiquetas de los clústeres
+data_combined_1990_2000 <- data_combined_1990_2000 %>%
+  mutate(
+    Cluster = case_when(
+      Cluster == "1" ~ "2",  # Si el clúster es 1, cambia a 2
+      Cluster == "2" ~ "1",  # Si el clúster es 2, cambia a 1
+      TRUE ~ as.character(Cluster)  # Mantener los demás clústeres sin cambios
+    ),
+    Cluster = as.factor(Cluster)  # Convertir a factor nuevamente
+  )
+
+# Verificar los primeros registros después del cambio
+data_combined_1990_2000
+```
+
+```{r}
+# Cargar librerías necesarias
+if (!requireNamespace("ggplot2", quietly = TRUE)) install.packages("ggplot2")
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Convertir la data a formato largo para graficar correctamente
+data_long <- data_combined_1990_2000 %>%
+  pivot_longer(
+    cols = starts_with("19") | starts_with("20"),  # Seleccionar columnas con datos anuales
+    names_to = "Year",         # Crear una columna llamada "Year"
+    values_to = "Emissions"    # Valores de las emisiones per cápita
+  ) %>%
+  mutate(Year = as.numeric(gsub("_per_capita", "", Year)))  # Limpiar nombres de años
+
+# Crear un gráfico con facetas organizadas en una sola fila horizontal
+ggplot(data_long, aes(x = Year, y = Emissions, color = Country, group = Country)) +
+  geom_line(size = 0.8) +  # Líneas para cada país
+  geom_point(size = 2) +  # Puntos en cada año
+  facet_wrap(~Cluster, nrow = 1) +  # Todas las facetas en una sola fila
+  scale_x_continuous(
+      breaks = 1990:2000  # Mostrar todos los años entre 1990 y 2000
+    ) +
+  theme_minimal() +
+  labs(
+    title = "Emisiones de GEI per cápita por Clúster (1990 - 2000)",
+    subtitle = "Datos agrupados por clúster de países",
+    x = "Año",
+    y = "Emisiones (tCO2eq per cápita)",
+    color = "País"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    legend.position = "right"  # Leyenda a la derecha del gráfico
+  )
+```
+
+### Cluster Analysis 2001 - 2010
+
+```{r}
+# Filtrar las columnas relevantes (1990 a 2000) y eliminar valores faltantes, excluyendo `Country`
+data_combined_cleaned <- data_combined %>%
+  select(matches("^200[1-9]_per_capita$|^2010_per_capita$")) %>%  # Seleccionar columnas entre 1990 y 2000
+  na.omit()  # Eliminar filas con valores faltantes (NA)
+
+# Verificar los datos procesados
+head(data_combined_cleaned)
+```
+
+```{r}
+# Estandarizar los datos para eliminar el efecto de las diferentes escalas
+data_scaled <- scale(data_combined_cleaned)
+```
+
+```{r}
+library(factoextra)
+# Determinar el número máximo de clústeres
+n_obs <- nrow(data_scaled)  # Número de filas en los datos escalados
+
+# Graficar el método del codo con un límite en el número de clústeres
+fviz_nbclust(data_scaled, kmeans, method = "wss", k.max = min(10, n_obs - 1)) +
+  labs(title = "Método del Codo para Determinar el Número de Clústeres (2001 - 2010)")
+```
+
+```{r}
+# Cargar librerías necesarias
+if (!requireNamespace("factoextra", quietly = TRUE)) install.packages("factoextra")
+if (!requireNamespace("dendextend", quietly = TRUE)) install.packages("dendextend")
+
+library(factoextra)
+library(dendextend)
+
+# Calcular la matriz de distancias (usaremos la distancia Euclidiana)
+distance_matrix <- dist(data_scaled, method = "euclidean")
+
+# Realizar el clustering jerárquico (usaremos el método de enlace completo)
+hclust_result <- hclust(distance_matrix, method = "complete")
+
+# Graficar el dendrograma
+fviz_dend(hclust_result, k = 3,  # Número de clústeres deseados
+          cex = 0.5,             # Tamaño del texto
+          k_colors = c("red", "blue", "green"),  # Colores para los clústeres
+          rect = TRUE,           # Dibujar rectángulos alrededor de los clústeres
+          rect_border = "gray",
+          rect_fill = TRUE,
+          main = "Dendrograma del Clustering Jerárquico (2001 - 2010)")
+```
+
+```{r}
+# Asignar observaciones a clústeres (k = número de clústeres deseados)
+cluster_assignments <- cutree(hclust_result, k = 3)  # Cambia "k" según el número de clústeres deseado
+
+# Visualización de los clústeres en el espacio PCA
+fviz_cluster(
+  list(data = data_scaled, cluster = cluster_assignments),
+  geom = "point",
+  ellipse.type = "convex",  # Dibujar elipses alrededor de los clústeres
+  ggtheme = theme_minimal(),
+  main = "Visualización de Clústeres Jerárquicos con PCA"
+)
+```
+
+```{r}
+# Cortar el dendrograma en 3 clústeres
+clusters_hierarchical <- cutree(hclust_result, k = 3)
+
+data_combined_2001_2010 <- data_combined %>%
+  select(Country,matches("^200[1-9]_per_capita$|^2010_per_capita$"))
+
+# Agregar los clústeres al dataset original
+data_combined_2001_2010$Cluster <- as.factor(clusters_hierarchical)
+
+library(dplyr)
+
+# Intercambiar las etiquetas de los clústeres
+data_combined_2001_2010 <- data_combined_2001_2010 %>%
+  mutate(
+    Cluster = case_when(
+      Country == "Brazil" ~ "2",  # Asignar siempre el clúster 2 a Brasil
+      Cluster == "1" ~ "2",  # Si el clúster es 1, cambia a 2
+      Cluster == "2" ~ "1",  # Si el clúster es 2, cambia a 1
+      TRUE ~ as.character(Cluster)  # Mantener los demás clústeres sin cambios
+    ),
+    Cluster = as.factor(Cluster)  # Convertir a factor nuevamente
+  )
+
+# Verificar los primeros registros después del cambio
+data_combined_2001_2010
+```
+
+```{r}
+# Cargar librerías necesarias
+if (!requireNamespace("ggplot2", quietly = TRUE)) install.packages("ggplot2")
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Convertir la data a formato largo para graficar correctamente
+data_long <- data_combined_2001_2010 %>%
+  pivot_longer(
+    cols = starts_with("20"),  # Seleccionar columnas con datos anuales
+    names_to = "Year",         # Crear una columna llamada "Year"
+    values_to = "Emissions"    # Valores de las emisiones per cápita
+  ) %>%
+  mutate(Year = as.numeric(gsub("_per_capita", "", Year)))  # Limpiar nombres de años
+
+# Crear un gráfico con facetas organizadas en una sola fila horizontal
+ggplot(data_long, aes(x = Year, y = Emissions, color = Country, group = Country)) +
+  geom_line(size = 0.8) +  # Líneas para cada país
+  geom_point(size = 2) +  # Puntos en cada año
+  facet_wrap(~Cluster, nrow = 1) +  # Todas las facetas en una sola fila
+  scale_x_continuous(
+      breaks = 2001:2010  # Mostrar todos los años entre 1990 y 2000
+    ) +
+  theme_minimal() +
+  labs(
+    title = "Emisiones de GEI per cápita por Clúster (2001 - 2010)",
+    subtitle = "Datos agrupados por clúster de países",
+    x = "Año",
+    y = "Emisiones (tCO2eq per cápita)",
+    color = "País"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    legend.position = "right"  # Leyenda a la derecha del gráfico
+  )
+```
+
+### Cluster Analysis 2011 - 2021
+
+```{r}
+# Filtrar las columnas relevantes (1990 a 2000) y eliminar valores faltantes, excluyendo `Country`
+data_combined_cleaned <- data_combined %>%
+  select(matches("^201[1-9]_per_capita$|^202[0-1]_per_capita$")) %>%  # Seleccionar columnas entre 2011-2021
+  na.omit()  # Eliminar filas con valores faltantes (NA)
+
+# Verificar los datos procesados
+head(data_combined_cleaned)
+```
+
+```{r}
+# Estandarizar los datos para eliminar el efecto de las diferentes escalas
+data_scaled <- scale(data_combined_cleaned)
+```
+
+```{r}
+library(factoextra)
+# Determinar el número máximo de clústeres
+n_obs <- nrow(data_scaled)  # Número de filas en los datos escalados
+
+# Graficar el método del codo con un límite en el número de clústeres
+fviz_nbclust(data_scaled, kmeans, method = "wss", k.max = min(10, n_obs - 1)) +
+  labs(title = "Método del Codo para Determinar el Número de Clústeres (2011 - 2021)")
+```
+
+```{r}
+# Cargar librerías necesarias
+if (!requireNamespace("factoextra", quietly = TRUE)) install.packages("factoextra")
+if (!requireNamespace("dendextend", quietly = TRUE)) install.packages("dendextend")
+
+library(factoextra)
+library(dendextend)
+
+# Calcular la matriz de distancias (usaremos la distancia Euclidiana)
+distance_matrix <- dist(data_scaled, method = "euclidean")
+
+# Realizar el clustering jerárquico (usaremos el método de enlace completo)
+hclust_result <- hclust(distance_matrix, method = "complete")
+
+# Graficar el dendrograma
+fviz_dend(hclust_result, k = 3,  # Número de clústeres deseados
+          cex = 0.5,             # Tamaño del texto
+          k_colors = c("red", "blue", "green"),  # Colores para los clústeres
+          rect = TRUE,           # Dibujar rectángulos alrededor de los clústeres
+          rect_border = "gray",
+          rect_fill = TRUE,
+          main = "Dendrograma del Clustering Jerárquico (2011 - 2021)")
+```
+
+```{r}
+# Asignar observaciones a clústeres (k = número de clústeres deseados)
+cluster_assignments <- cutree(hclust_result, k = 3)  # Cambia "k" según el número de clústeres deseado
+
+# Visualización de los clústeres en el espacio PCA
+fviz_cluster(
+  list(data = data_scaled, cluster = cluster_assignments),
+  geom = "point",
+  ellipse.type = "convex",  # Dibujar elipses alrededor de los clústeres
+  ggtheme = theme_minimal(),
+  main = "Visualización de Clústeres Jerárquicos con PCA"
+)
+```
+
+```{r}
+# Cortar el dendrograma en 3 clústeres
+clusters_hierarchical <- cutree(hclust_result, k = 3)
+
+data_combined_2011_2021 <- data_combined %>%
+  select(Country,matches("^201[1-9]_per_capita$|^202[0-1]_per_capita$"))
+
+# Agregar los clústeres al dataset original
+data_combined_2011_2021$Cluster <- as.factor(clusters_hierarchical)
+
+library(dplyr)
+
+# Intercambiar las etiquetas de los clústeres
+data_combined_2011_2021 <- data_combined_2011_2021 %>%
+  mutate(
+    Cluster = case_when(
+      Cluster == "1" ~ "2",  # Si el clúster es 1, cambia a 2
+      Cluster == "2" ~ "1",  # Si el clúster es 2, cambia a 1
+      TRUE ~ as.character(Cluster)  # Mantener los demás clústeres sin cambios
+    ),
+    Cluster = as.factor(Cluster)  # Convertir a factor nuevamente
+  )
+
+# Verificar los primeros registros después del cambio
+data_combined_2011_2021
+```
+
+```{r}
+# Cargar librerías necesarias
+if (!requireNamespace("ggplot2", quietly = TRUE)) install.packages("ggplot2")
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Convertir la data a formato largo para graficar correctamente
+data_long <- data_combined_2011_2021 %>%
+  pivot_longer(
+    cols = starts_with("20"),  # Seleccionar columnas con datos anuales
+    names_to = "Year",         # Crear una columna llamada "Year"
+    values_to = "Emissions"    # Valores de las emisiones per cápita
+  ) %>%
+  mutate(Year = as.numeric(gsub("_per_capita", "", Year)))  # Limpiar nombres de años
+
+# Crear un gráfico con facetas organizadas en una sola fila horizontal
+ggplot(data_long, aes(x = Year, y = Emissions, color = Country, group = Country)) +
+  geom_line(size = 0.8) +  # Líneas para cada país
+  geom_point(size = 2) +  # Puntos en cada año
+  facet_wrap(~Cluster, nrow = 1) +  # Todas las facetas en una sola fila
+  scale_x_continuous(
+      breaks = 2011:2021  # Mostrar todos los años entre 1990 y 2000
+    ) +
+  theme_minimal() +
+  labs(
+    title = "Emisiones de GEI per cápita por Clúster (2011 - 2021)",
+    subtitle = "Datos agrupados por clúster de países",
+    x = "Año",
+    y = "Emisiones (tCO2eq per cápita)",
+    color = "País"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    legend.position = "right"  # Leyenda a la derecha del gráfico
+  )
+```
